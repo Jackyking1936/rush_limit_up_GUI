@@ -1,6 +1,8 @@
 import sys
 import pickle
 import json
+from datetime import datetime
+import pandas as pd
 from pathlib import Path
 
 from fubon_neo.sdk import FubonSDK, Order
@@ -131,7 +133,16 @@ class LoginForm(QWidget):
             msg.setWindowTitle("登入失敗")
             msg.setText(accounts.message)
             msg.exec()
-            
+
+class RepeatTimer(Timer):
+    def run(self):
+        while not self.finished.wait(self.interval):
+            self.function(*self.args, **self.kwargs)
+
+class Communicate(QObject):
+    # 定義一個帶參數的信號
+    print_log_signal = Signal(str)
+
 class MainApp(QWidget):
     def __init__(self):
         super().__init__()
@@ -189,6 +200,13 @@ class MainApp(QWidget):
         self.button_start.setSizePolicy(QSizePolicy.MinimumExpanding, QSizePolicy.MinimumExpanding)
         self.button_start.setStyleSheet("QPushButton { font-size: 24px; font-weight: bold; }")
         layout_condition.addWidget(self.button_start, 0, 6, 3, 1)
+
+        # 停止按鈕
+        self.button_stop = QPushButton('停止洗價')
+        self.button_stop.setSizePolicy(QSizePolicy.MinimumExpanding, QSizePolicy.MinimumExpanding)
+        self.button_stop.setStyleSheet("QPushButton { font-size: 24px; font-weight: bold; }")
+        layout_condition.addWidget(self.button_stop, 0, 6, 3, 1)
+        self.button_stop.setVisible(False)
         
         # 模擬區Layout設定
         self.fake_buy = QPushButton('fake buy filled')
@@ -220,27 +238,152 @@ class MainApp(QWidget):
         sdk.init_realtime() # 建立行情連線
         self.print_log("行情連線建立OK")
         self.reststock = sdk.marketdata.rest_client.stock
-        
-        # 初始化參數資訊
-        self.epsilon = 0.0000001
-        self.row_idx_map = {}
-        self.col_idx_map = dict(zip(self.table_header, range(len(self.table_header))))
+        self.wsstock = sdk.marketdata.websocket_client.stock
 
         # slot function connect
         self.button_start.clicked.connect(self.on_button_start_clicked)
+        self.button_stop.clicked.connect(self.on_button_stop_clicked)
+
+        # communicator init and slot function connect
+        self.communicator = Communicate()
+        self.communicator.print_log_signal.connect(self.print_log)
+
+        # 各參數初始化
+        self.timer = None
+        self.watch_percent = float(self.lineEdit_up_range.text())
+        self.snapshot_freq = int(self.lineEdit_freq.text())
+        self.trade_budget = float(self.lineEdit_trade_budget.text())
+
+        open_time = datetime.today().replace(day=25, hour=9, minute=0, second=0, microsecond=0)
+        self.open_unix = int(datetime.timestamp(open_time)*1000000)
+        self.last_close_dict = {}
+        self.subscribed_list = []
+
+        self.epsilon = 0.0000001
+        self.row_idx_map = {}
+        self.col_idx_map = dict(zip(self.table_header, range(len(self.table_header))))
+    
+    def handle_message(self, message):
+        msg = json.loads(message)
+        event = msg["event"]
+        data = msg["data"]
+        print(event, data)
+
+    def handle_connect(self):
+        self.communicator.print_log_signal.emit('market data connected')
+    
+    def handle_disconnect(self, code, message):
+        self.communicator.print_log_signal.emit(f'market data disconnect: {code}, {message}')
+    
+    def handle_error(self, error):
+        self.communicator.print_log_signal.emit(f'market data error: {error}')
+
+    def snapshot_n_subscribe(self):
+        self.communicator.print_log_signal.emit("snapshoting...")
+        TSE_movers = self.reststock.snapshot.movers(market='TSE', type='COMMONSTOCK', direction='up', change='percent', gte=self.watch_percent)
+        TSE_movers_df = pd.DataFrame(TSE_movers['data'])
+        OTC_movers = self.reststock.snapshot.movers(market='OTC', type='COMMONSTOCK', direction='up', change='percent', gte=self.watch_percent)
+        OTC_movers_df = pd.DataFrame(OTC_movers['data'])
+
+        all_movers_df = pd.concat([TSE_movers_df, OTC_movers_df])
+        all_movers_df = all_movers_df[all_movers_df['lastUpdated']>self.open_unix]
+        
+        all_movers_df['last_close'] = all_movers_df['closePrice']-all_movers_df['change']
+
+        self.last_close_dict.update(dict(zip(all_movers_df['symbol'], all_movers_df['last_close'])))
+
+        new_subscribe = list(all_movers_df['symbol'])
+        new_subscribe = list(set(new_subscribe).difference(set(self.subscribed_list)))
+        self.communicator.print_log_signal.emit("NEW UP SYMBOL: "+str(new_subscribe))
+
+        if new_subscribe:
+            self.wsstock.subscribe({
+                'channel': 'trades',
+                'symbols': new_subscribe
+            })
+        
+            self.subscribed_list.extend(new_subscribe)
 
     def on_button_start_clicked(self):
-        self.print_log("開始執行")
+
+        try:
+            self.watch_percent = float(self.lineEdit_up_range.text())
+            if self.watch_percent > 10 or self.watch_percent < 1:
+                self.print_log("請輸入正確的監控漲幅(%), 範圍1~10")
+                return
+        except Exception as e:
+            self.print_log("請輸入正確的監控漲幅(%), "+str(e))
+            return
+
+        try:
+            self.snapshot_freq = int(self.lineEdit_freq.text())
+            if self.snapshot_freq < 1:
+                self.print_log("請輸入正確的監控頻率(整數，最低1秒)")
+                return
+        except Exception as e:
+            self.print_log("請輸入正確的監控頻率(整數，最低1秒), "+str(e))
+            return
+        
+        try:
+            self.trade_budget = float(self.lineEdit_trade_budget.text())
+            if self.trade_budget<0:
+                self.print_log("請輸入正確的每檔買入額度(萬元), 必須大於0")
+                return
+        except Exception as e:
+            self.print_log("請輸入正確的每檔買入額度(萬元), "+str(e))
+            return
+        
+        self.print_log("開始執行監控")
         self.lineEdit_up_range.setReadOnly(True)
         self.lineEdit_freq.setReadOnly(True)
         self.lineEdit_trade_budget.setReadOnly(True)
         self.button_start.setVisible(False)
-        
+        self.button_stop.setVisible(True)
+
+        sdk.init_realtime()
+        self.wsstock = sdk.marketdata.websocket_client.stock
+        self.wsstock.on('message', self.handle_message)
+        self.wsstock.on('connect', self.handle_connect)
+        self.wsstock.on('disconnect', self.handle_disconnect)
+        self.wsstock.on('error', self.handle_error)
+        self.wsstock.connect()
+
+        self.timer = RepeatTimer(self.snapshot_freq, self.snapshot_n_subscribe)
+        self.timer.start()
+
+    def on_button_stop_clicked(self):
+        self.print_log("停止執行監控")
+        self.lineEdit_up_range.setReadOnly(False)
+        self.lineEdit_freq.setReadOnly(False)
+        self.lineEdit_trade_budget.setReadOnly(False)
+        self.button_stop.setVisible(False)
+        self.button_start.setVisible(True)
+
+        self.timer.cancel()
+        self.wsstock.disconnect()
 
     # 更新最新log到QPlainTextEdit的slot function
     def print_log(self, log_info):
         self.log_text.appendPlainText(log_info)
         self.log_text.moveCursor(QTextCursor.End)
+    
+    # 視窗關閉時要做的事，主要是關websocket連結
+    def closeEvent(self, event):
+        # do stuff
+        self.print_log("disconnect websocket...")
+        self.wsstock.disconnect()
+        try:
+            if self.timer.is_alive():
+                self.timer.cancel()
+        except AttributeError:
+            print("no timer exist")
+        
+        sdk.logout()
+        can_exit = True
+        if can_exit:
+            event.accept() # let the window close
+        else:
+            event.ignore()
 
 
 try:

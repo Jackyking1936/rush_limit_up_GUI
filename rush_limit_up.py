@@ -15,8 +15,8 @@ dev_server = os.getenv('SERVER')
 
 from fubon_neo.sdk import FubonSDK, Order
 
-sdk = FubonSDK(dev_server)
-response = sdk.login(id, pwd, cert_filepath, certpwd)  # 需登入後，才能取得行情權限
+sdk = FubonSDK()
+response = sdk.login("H124181635", "j56137642", "C:/CAFubon/H124181635/H124181635.pfx", "j56137642")  # 需登入後，才能取得行情權限
 
 # 更新可用帳號列表
 accounts = response.data
@@ -24,7 +24,7 @@ accounts = response.data
 # 設定啟用帳號
 active_account = None
 for account in accounts:
-    if target_account == account.account:
+    if "9809789" == account.account:
         active_account = account
         break
 
@@ -46,6 +46,14 @@ watch_percent = 6
 open_time = datetime.today().replace(hour=9, minute=0, second=0, microsecond=0)
 open_unix = int(datetime.timestamp(open_time)*1000000)
 
+TSE_movers = reststock.snapshot.movers(market='TSE', type='COMMONSTOCK', direction='up', change='percent', gte=watch_percent)
+TSE_movers_df = pd.DataFrame(TSE_movers['data'])
+OTC_movers = reststock.snapshot.movers(market='OTC', type='COMMONSTOCK', direction='up', change='percent', gte=watch_percent)
+OTC_movers_df = pd.DataFrame(OTC_movers['data'])
+
+stock = sdk.marketdata.websocket_client.stock
+
+#%%
 def monitor_n_subscribe():
     TSE_movers = reststock.snapshot.movers(market='TSE', type='COMMONSTOCK', direction='up', change='percent', gte=watch_percent)
     TSE_movers_df = pd.DataFrame(TSE_movers['data'])
