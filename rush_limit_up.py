@@ -1,15 +1,15 @@
 #%%
-import os 
-from dotenv import load_dotenv
+# import os 
+# from dotenv import load_dotenv
 
-load_dotenv(override=True)
-id = os.getenv('ID')
-pwd = os.getenv('PWD')
-cert_filepath = os.getenv('CPATH')
-certpwd = os.getenv('CPWD')
+# load_dotenv(override=True)
+# id = os.getenv('ID')
+# pwd = os.getenv('PWD')
+# cert_filepath = os.getenv('CPATH')
+# certpwd = os.getenv('CPWD')
 
-target_account = os.getenv('ACCOUNT')
-dev_server = os.getenv('SERVER')
+# target_account = os.getenv('ACCOUNT')
+# dev_server = os.getenv('SERVER')
 
 # %%
 
