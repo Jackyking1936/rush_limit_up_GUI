@@ -160,7 +160,7 @@ class MainApp(QWidget):
         # 製作上下排列layout上為庫存表，下為log資訊
         layout = QVBoxLayout()
         # 庫存表表頭
-        self.table_header = ['股票名稱', '股票代號', '上市櫃', '成交', '買進', '賣出', '漲幅(%)', '委託數量', '成交數量']
+        self.table_header = ['股票名稱', '股票代號', '上市櫃', '成交', '買進', '賣出', '漲幅(%)', '委託數量', '成交數量', '備註']
         
         self.tablewidget = QTableWidget(0, len(self.table_header))
         self.tablewidget.setHorizontalHeaderLabels([f'{item}' for item in self.table_header])
@@ -302,8 +302,12 @@ class MainApp(QWidget):
                 item = QTableWidgetItem(tse_otc)
                 self.tablewidget.setItem(row, j, item)
             elif self.table_header[j] == '成交':
-                item = QTableWidgetItem(str(round(price+self.epsilon, 2)))
-                self.tablewidget.setItem(row, j, item)
+                if price:
+                    item = QTableWidgetItem(str(round(price+self.epsilon, 2)))
+                    self.tablewidget.setItem(row, j, item)
+                else:
+                    item = QTableWidgetItem('-')
+                    self.tablewidget.setItem(row, j, item)
             elif self.table_header[j] == '買進':
                 if bid > 0:
                     item = QTableWidgetItem(str(round(bid+self.epsilon, 2)))
@@ -361,13 +365,22 @@ class MainApp(QWidget):
         elif event == "snapshot":
             if 'ask' in data:
                 self.communicator.add_new_sub_signal.emit(data['symbol'], data['market'], data['price'], data['bid'], data['ask'])
-            else:
+            elif 'bid' in data:
                 self.communicator.add_new_sub_signal.emit(data['symbol'], data['market'], data['price'], data['bid'], None)
+            elif 'price' in data:
+                self.communicator.add_new_sub_signal.emit(data['symbol'], data['market'], data['price'], None, None)
+            else:
+                self.communicator.add_new_sub_signal.emit(data['symbol'], data['market'], None, None, None)
+
         elif event == "data":
             if 'ask' in data:
                 self.communicator.update_table_row_signal.emit(data['symbol'], data['price'], data['bid'], data['ask'])
-            else:
+            elif 'bid' in data:
                 self.communicator.update_table_row_signal.emit(data['symbol'], data['price'], data['bid'], None)
+            elif 'price' in data:
+                self.communicator.update_table_row_signal.emit(data['symbol'], data['price'], None, None)
+            else:
+                self.communicator.update_table_row_signal.emit(data['symbol'], None, None, None)
             
             if 'isLimitUpAsk' in data:
                 if data['isLimitUpAsk']:
