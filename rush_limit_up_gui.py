@@ -8,8 +8,8 @@ from pathlib import Path
 from fubon_neo.sdk import FubonSDK, Order
 from fubon_neo.constant import TimeInForce, OrderType, PriceType, MarketType, BSAction
 
-from PySide6.QtWidgets import QApplication, QWidget, QPushButton, QLabel, QLineEdit, QGridLayout, QVBoxLayout, QHBoxLayout, QMessageBox, QTableWidget, QTableWidgetItem, QHeaderView, QPlainTextEdit, QFileDialog, QSizePolicy
-from PySide6.QtGui import QTextCursor, QIcon
+from PySide6.QtWidgets import QApplication, QWidget, QPushButton, QLabel, QLineEdit, QGridLayout, QVBoxLayout, QMessageBox, QTableWidget, QTableWidgetItem, QPlainTextEdit, QFileDialog, QSizePolicy
+from PySide6.QtGui import QTextCursor, QIcon, QColor
 from PySide6.QtCore import Qt, Signal, QObject, QMutex
 from threading import Timer
 
@@ -139,11 +139,29 @@ class RepeatTimer(Timer):
         while not self.finished.wait(self.interval):
             self.function(*self.args, **self.kwargs)
 
+# 仿FilledData的物件
+class fake_filled_data():
+    date="2023/09/15"
+    branch_no="6460"          
+    account="123"   
+    order_no="bA422"          
+    stock_no="00900"            
+    buy_sell=BSAction.Sell     
+    filled_no="00000000001"    
+    filled_avg_price=35.2      
+    filled_qty=1000
+    filled_price=35.2          
+    order_type=OrderType.Stock
+    filled_time="10:31:00.931"  
+    user_def=None
+
 class Communicate(QObject):
     # 定義一個帶參數的信號
     print_log_signal = Signal(str)
-    add_new_sub_signal = Signal(str, str, float, float, float)
-    update_table_row_signal = Signal(str, float, float, float)
+    add_new_sub_signal = Signal(str, str, float, float, float, bool)
+    update_table_row_signal = Signal(str, float, float, float, bool)
+    order_qty_update = Signal(str, int)
+    filled_qty_update = Signal(str, int)
 
 class MainApp(QWidget):
     def __init__(self):
@@ -160,7 +178,7 @@ class MainApp(QWidget):
         # 製作上下排列layout上為庫存表，下為log資訊
         layout = QVBoxLayout()
         # 庫存表表頭
-        self.table_header = ['股票名稱', '股票代號', '上市櫃', '成交', '買進', '賣出', '漲幅(%)', '委託數量', '成交數量', '備註']
+        self.table_header = ['股票名稱', '股票代號', '上市櫃', '成交', '買進', '賣出', '漲幅(%)', '委託數量', '成交數量']
         
         self.tablewidget = QTableWidget(0, len(self.table_header))
         self.tablewidget.setHorizontalHeaderLabels([f'{item}' for item in self.table_header])
@@ -212,18 +230,18 @@ class MainApp(QWidget):
         self.button_stop.setVisible(False)
         
         # 模擬區Layout設定
-        self.fake_buy = QPushButton('fake buy filled')
-        self.fake_sell = QPushButton('fake sell filled')
-        self.fake_websocket = QPushButton('fake websocket')
+        self.button_fake_buy_filled = QPushButton('fake buy filled')
+        self.button_show_var = QPushButton('show variable')
+        self.button_fake_websocket = QPushButton('fake websocket')
         
         layout_sim = QGridLayout()
         label_sim = QLabel('測試用按鈕')
         label_sim.setStyleSheet("QLabel { font-size: 24px; font-weight: bold; }")
         label_sim.setAlignment(Qt.AlignCenter)
         layout_sim.addWidget(label_sim, 0, 1)
-        layout_sim.addWidget(self.fake_buy, 1, 0)
-        layout_sim.addWidget(self.fake_sell, 1, 1)
-        layout_sim.addWidget(self.fake_websocket, 1, 2)
+        layout_sim.addWidget(self.button_fake_buy_filled, 1, 0)
+        layout_sim.addWidget(self.button_fake_websocket, 1, 1)
+        layout_sim.addWidget(self.button_show_var, 1, 2)
         
         # Log區Layout設定
         self.log_text = QPlainTextEdit()
@@ -246,29 +264,91 @@ class MainApp(QWidget):
         # slot function connect
         self.button_start.clicked.connect(self.on_button_start_clicked)
         self.button_stop.clicked.connect(self.on_button_stop_clicked)
+        self.button_show_var.clicked.connect(self.show_var)
+        self.button_fake_buy_filled.clicked.connect(self.fake_buy_filled)
+        self.button_fake_websocket.clicked.connect(self.fake_ws_data)
 
         # communicator init and slot function connect
         self.communicator = Communicate()
         self.communicator.print_log_signal.connect(self.print_log)
         self.communicator.add_new_sub_signal.connect(self.add_new_subscribed)
         self.communicator.update_table_row_signal.connect(self.update_table_row)
+        self.communicator.order_qty_update.connect(self.update_order_qty_item)
+        self.communicator.filled_qty_update.connect(self.update_filled_qty_item)
 
         # 各參數初始化
-        self.timer = None
+        self.snapshot_timer = None
+        self.fake_ws_timer = None
         self.watch_percent = float(self.lineEdit_up_range.text())
         self.snapshot_freq = int(self.lineEdit_freq.text())
         self.trade_budget = float(self.lineEdit_trade_budget.text())
 
-        open_time = datetime.today().replace(hour=9, minute=0, second=0, microsecond=0)
+        open_time = datetime.today().replace(day=26, hour=9, minute=0, second=0, microsecond=0)
         self.open_unix = int(datetime.timestamp(open_time)*1000000)
         self.last_close_dict = {}
         self.subscribed_ids = {}
+        self.is_ordered = {}
+        self.order_tag = 'rlu'
+        self.fake_price_cnt=0
+        # self.mutex = QMutex()
 
         self.epsilon = 0.0000001
         self.row_idx_map = {}
         self.col_idx_map = dict(zip(self.table_header, range(len(self.table_header))))
     
-    def update_table_row(self, symbol, price, bid, ask):
+    # 測試用假裝有websocket data的按鈕slot function
+    def fake_ws_data(self):
+        if self.fake_price_cnt % 2==0:
+            self.price_interval = 0
+            self.fake_ws_timer = RepeatTimer(1, self.fake_message, args=(list(self.row_idx_map.keys())[0], ))
+            self.fake_ws_timer.start()
+        else:
+            self.fake_ws_timer.cancel()
+
+        self.fake_price_cnt+=1
+
+    def fake_message(self, stock_no):
+        self.price_interval+=1
+        json_template = '''{{"event":"data","data":{{"symbol":"{symbol}","type":"EQUITY","exchange":"TWSE","market":"TSE","price":{price},"size":713,"bid":16.67,"ask":{price}, "isLimitUpAsk":true, "volume":8066,"isClose":true,"time":1718343000000000,"serial":9475857}},"id":"w4mkzAqYAYFKyEBLyEjmHEoNADpwKjUJmqg02G3OC9YmV","channel":"trades"}}'''
+        json_price = 15+self.price_interval
+        json_str = json_template.format(symbol=stock_no, price=str(json_price))
+        self.handle_message(json_str)
+
+    # 測試用假裝有買入成交的按鈕slot function
+    def fake_buy_filled(self):
+        new_fake_buy = fake_filled_data()
+        if self.row_idx_map:
+            new_fake_buy.stock_no = list(self.row_idx_map.keys())[0]
+        else:
+            return
+        new_fake_buy.buy_sell = BSAction.Buy
+        new_fake_buy.filled_qty = 2000
+        new_fake_buy.filled_price = 17
+        new_fake_buy.account = active_account.account
+        new_fake_buy.user_def = self.order_tag
+        self.on_filled(None, new_fake_buy)
+
+    def show_var(self):
+        num = 40
+        print('-'*num)
+        print('row index', self.row_idx_map)
+        print('-'*num)
+        print('col index', self.col_idx_map)
+        print('-'*num)
+        print('subscribed ids', self.subscribed_ids)
+        print('-'*num)
+        print('is_ordered ids', self.is_ordered)
+        print('-'*num)
+
+    def update_filled_qty_item(self, symbol, filled_qty):
+        pre_filled_qty = self.tablewidget.item(self.row_idx_map[symbol], self.col_idx_map['成交數量']).text()
+        pre_filled_qty = int(pre_filled_qty)
+        self.tablewidget.item(self.row_idx_map[symbol], self.col_idx_map['成交數量']).setText(str(filled_qty+pre_filled_qty))
+
+    def update_order_qty_item(self, symbol, order_qty):
+        self.tablewidget.item(self.row_idx_map[symbol], self.col_idx_map['委託數量']).setText(str(order_qty))
+
+    def update_table_row(self, symbol, price, bid, ask, is_limit_up):
         self.tablewidget.item(self.row_idx_map[symbol], self.col_idx_map['成交']).setText(str(round(price+self.epsilon, 2)))
         if bid>0:
             self.tablewidget.item(self.row_idx_map[symbol], self.col_idx_map['買進']).setText(str(round(bid+self.epsilon, 2)))
@@ -280,13 +360,25 @@ class MainApp(QWidget):
         else:
             self.tablewidget.item(self.row_idx_map[symbol], self.col_idx_map['賣出']).setText('-')
 
-        up_range = (price-self.last_close_dict[symbol])/self.last_close_dict[symbol]*100
-        self.tablewidget.item(self.row_idx_map[symbol], self.col_idx_map['漲幅(%)']).setText(str(round(up_range+self.epsilon, 2))+'%')
+        if price:
+            up_range = (price-self.last_close_dict[symbol])/self.last_close_dict[symbol]*100
+            self.tablewidget.item(self.row_idx_map[symbol], self.col_idx_map['漲幅(%)']).setText(str(round(up_range+self.epsilon, 2))+'%')
+        else:
+            self.tablewidget.item(self.row_idx_map[symbol], self.col_idx_map['賣出']).setText('-')
+        
+        if is_limit_up:
+            self.tablewidget.item(self.row_idx_map[symbol], self.col_idx_map['漲幅(%)']).setBackground(QColor(Qt.red))
+            self.tablewidget.item(self.row_idx_map[symbol], self.col_idx_map['漲幅(%)']).setForeground(QColor(Qt.white))
+        else:
+            self.tablewidget.item(self.row_idx_map[symbol], self.col_idx_map['漲幅(%)']).setBackground(QColor(Qt.transparent))
+            self.tablewidget.item(self.row_idx_map[symbol], self.col_idx_map['漲幅(%)']).setForeground(QColor(Qt.black))
 
     # ['股票名稱', '股票代號', '上市櫃', '成交', '買進', '賣出', '漲幅(%)', '委託數量', '成交數量']
-    def add_new_subscribed(self, symbol, tse_otc, price, bid, ask):
+    def add_new_subscribed(self, symbol, tse_otc, price, bid, ask, is_limit_up):
         ticker_res = self.reststock.intraday.ticker(symbol=symbol)
-        print(ticker_res['name'])
+        # self.print_log(ticker_res['name'])
+        self.last_close_dict[symbol] = ticker_res['previousClose']
+
         row = self.tablewidget.rowCount()
         self.tablewidget.insertRow(row)
         self.row_idx_map[symbol] = row
@@ -323,9 +415,18 @@ class MainApp(QWidget):
                     item = QTableWidgetItem('-')
                     self.tablewidget.setItem(row, j, item)
             elif self.table_header[j] == '漲幅(%)':
-                self.last_close_dict[symbol] = ticker_res['previousClose']
-                up_range = (price-ticker_res['previousClose'])/ticker_res['previousClose']*100
-                item = QTableWidgetItem(str(round(up_range+self.epsilon, 2))+'%')
+                if price:
+                    up_range = (price-ticker_res['previousClose'])/ticker_res['previousClose']*100
+                    item = QTableWidgetItem(str(round(up_range+self.epsilon, 2))+'%')
+                else:
+                    item = QTableWidgetItem('-')
+
+                if is_limit_up:
+                    item.setBackground(QColor(Qt.red))
+                    item.setForeground(QColor(Qt.white))
+                else:
+                    item.setBackground(QColor(Qt.transparent))
+                    item.setForeground(QColor(Qt.black))
                 self.tablewidget.setItem(row, j, item)
             elif self.table_header[j] == '委託數量':
                 item = QTableWidgetItem('0')
@@ -333,6 +434,22 @@ class MainApp(QWidget):
             elif self.table_header[j] == '成交數量':
                 item = QTableWidgetItem('0')
                 self.tablewidget.setItem(row, j, item)
+
+    def buy_market_order(self, symbol, buy_qty, tag='rlu'):
+        order = Order(
+            buy_sell = BSAction.Buy,
+            symbol = symbol,
+            price =  None,
+            quantity =  int(buy_qty),
+            market_type = MarketType.Common,
+            price_type = PriceType.Market,
+            time_in_force = TimeInForce.ROD,
+            order_type = OrderType.Stock,
+            user_def = tag # optional field
+        )
+
+        order_res = sdk.stock.place_order(active_account, order)
+        return order_res
 
     def handle_message(self, message):
         msg = json.loads(message)
@@ -363,28 +480,49 @@ class MainApp(QWidget):
             self.communicator.print_log_signal.emit(remove_key+"...成功移除訂閱")
 
         elif event == "snapshot":
+            is_limit_up = False
+            if 'isLimitUpPrice' in data:
+                is_limit_up = True
+
             if 'ask' in data:
-                self.communicator.add_new_sub_signal.emit(data['symbol'], data['market'], data['price'], data['bid'], data['ask'])
+                self.communicator.add_new_sub_signal.emit(data['symbol'], data['market'], data['price'], data['bid'], data['ask'], is_limit_up)
             elif 'bid' in data:
-                self.communicator.add_new_sub_signal.emit(data['symbol'], data['market'], data['price'], data['bid'], None)
+                self.communicator.add_new_sub_signal.emit(data['symbol'], data['market'], data['price'], data['bid'], None, is_limit_up)
             elif 'price' in data:
-                self.communicator.add_new_sub_signal.emit(data['symbol'], data['market'], data['price'], None, None)
+                self.communicator.add_new_sub_signal.emit(data['symbol'], data['market'], data['price'], None, None, is_limit_up)
             else:
-                self.communicator.add_new_sub_signal.emit(data['symbol'], data['market'], None, None, None)
+                self.communicator.add_new_sub_signal.emit(data['symbol'], data['market'], None, None, None, is_limit_up)
 
         elif event == "data":
+            is_limit_up = False
+            if 'isLimitUpPrice' in data:
+                is_limit_up = True
+
             if 'ask' in data:
-                self.communicator.update_table_row_signal.emit(data['symbol'], data['price'], data['bid'], data['ask'])
+                self.communicator.update_table_row_signal.emit(data['symbol'], data['price'], data['bid'], data['ask'], is_limit_up)
             elif 'bid' in data:
-                self.communicator.update_table_row_signal.emit(data['symbol'], data['price'], data['bid'], None)
+                self.communicator.update_table_row_signal.emit(data['symbol'], data['price'], data['bid'], None, is_limit_up)
             elif 'price' in data:
-                self.communicator.update_table_row_signal.emit(data['symbol'], data['price'], None, None)
+                self.communicator.update_table_row_signal.emit(data['symbol'], data['price'], None, None, is_limit_up)
             else:
-                self.communicator.update_table_row_signal.emit(data['symbol'], None, None, None)
+                self.communicator.update_table_row_signal.emit(data['symbol'], None, None, None, is_limit_up)
             
-            if 'isLimitUpAsk' in data:
+            if ('isLimitUpAsk' in data) and (data['symbol'] not in self.is_ordered):
                 if data['isLimitUpAsk']:
-                    self.communicator.print_log_signal.emit('送出市價單...'+data['symbol'])
+                    self.communicator.print_log_signal.emit(data['symbol']+'...送出市價單')
+                    buy_qty = self.trade_budget//(data['ask']*1000)*1000
+                    if buy_qty <= 0:
+                        self.communicator.print_log_signal.emit(data['symbol']+'...額度不足購買1張')
+                    else:
+                        self.communicator.print_log_signal.emit(data['symbol']+'...委託'+str(buy_qty)+'股')
+                        order_res = self.buy_market_order(data['symbol'], buy_qty, self.order_tag)
+                        if order_res.is_success:
+                            self.communicator.print_log_signal.emit(data['symbol']+"...市價單發送成功，單號: "+order_res.data.order_no)
+                            self.is_ordered[data['symbol']] = buy_qty
+                            self.communicator.order_qty_update.emit(data['symbol'], buy_qty)
+                        else:
+                            self.communicator.print_log_signal.emit(data['symbol']+"...市價單發送失敗...")
+                            self.communicator.print_log_signal.emit(order_res.message)
 
     def handle_connect(self):
         self.communicator.print_log_signal.emit('market data connected')
@@ -397,6 +535,7 @@ class MainApp(QWidget):
     
     def handle_error(self, error):
         self.communicator.print_log_signal.emit(f'market data error: {error}')
+        self.mutex.unlock()
 
     def snapshot_n_subscribe(self):
         self.communicator.print_log_signal.emit("snapshoting...")
@@ -425,8 +564,8 @@ class MainApp(QWidget):
 
         try:
             self.watch_percent = float(self.lineEdit_up_range.text())
-            if self.watch_percent > 10 or self.watch_percent < 1:
-                self.print_log("請輸入正確的監控漲幅(%), 範圍1~10")
+            if self.watch_percent > 10 or self.watch_percent < 5:
+                self.print_log("請輸入正確的監控漲幅(%), 範圍5~10")
                 return
         except Exception as e:
             self.print_log("請輸入正確的監控漲幅(%), "+str(e))
@@ -446,6 +585,8 @@ class MainApp(QWidget):
             if self.trade_budget<0:
                 self.print_log("請輸入正確的每檔買入額度(萬元), 必須大於0")
                 return
+            else:
+                self.trade_budget = self.trade_budget*10000
         except Exception as e:
             self.print_log("請輸入正確的每檔買入額度(萬元), "+str(e))
             return
@@ -456,6 +597,12 @@ class MainApp(QWidget):
         self.lineEdit_trade_budget.setReadOnly(True)
         self.button_start.setVisible(False)
         self.button_stop.setVisible(True)
+        self.tablewidget.clearContents()
+        self.tablewidget.setRowCount(0)
+
+        # 重啟時需重設之參數
+        self.row_idx_map = {}
+        self.subscribed_ids = {}
 
         sdk.init_realtime()
         self.wsstock = sdk.marketdata.websocket_client.stock
@@ -465,15 +612,11 @@ class MainApp(QWidget):
         self.wsstock.on('error', self.handle_error)
         self.wsstock.connect()
 
-        if self.subscribed_ids:
-            self.wsstock.subscribe({
-                'channel': 'trades',
-                'symbols': list(self.subscribed_ids.keys())
-            })
+        sdk.set_on_filled(self.on_filled)
 
         self.snapshot_n_subscribe()
-        self.timer = RepeatTimer(self.snapshot_freq, self.snapshot_n_subscribe)
-        self.timer.start()
+        self.snapshot_timer = RepeatTimer(self.snapshot_freq, self.snapshot_n_subscribe)
+        self.snapshot_timer.start()
 
     def on_button_stop_clicked(self):
         self.print_log("停止執行監控")
@@ -483,8 +626,30 @@ class MainApp(QWidget):
         self.button_stop.setVisible(False)
         self.button_start.setVisible(True)
 
-        self.timer.cancel()
         self.wsstock.disconnect()
+
+        try:
+            if self.snapshot_timer.is_alive():
+                self.snapshot_timer.cancel()
+        except AttributeError:
+            print("no snapshot timer exist")
+        
+        try:
+            if self.fake_ws_timer.is_alive():
+                self.fake_ws_timer.cancel()
+        except AttributeError:
+            print("no fake ws timer exist")
+
+
+    def on_filled(self, err, content):
+        if err:
+            print("Filled Error:", err, "Content:", content)
+            return
+        
+        if content.account == active_account.account:
+            if content.user_def == self.order_tag:
+                self.communicator.filled_qty_update.emit(content.stock_no, content.filled_qty)
+                self.communicator.print_log_signal.emit(content.stock_no+'...成功成交'+str(content.filled_qty)+'股, '+'成交價:'+str(content.filled_price))
 
     # 更新最新log到QPlainTextEdit的slot function
     def print_log(self, log_info):
@@ -497,10 +662,16 @@ class MainApp(QWidget):
         self.print_log("disconnect websocket...")
         self.wsstock.disconnect()
         try:
-            if self.timer.is_alive():
-                self.timer.cancel()
+            if self.snapshot_timer.is_alive():
+                self.snapshot_timer.cancel()
         except AttributeError:
-            print("no timer exist")
+            print("no snapshot timer exist")
+        
+        try:
+            if self.fake_ws_timer.is_alive():
+                self.fake_ws_timer.cancel()
+        except AttributeError:
+            print("no fake ws timer exist")
         
         sdk.logout()
         can_exit = True
