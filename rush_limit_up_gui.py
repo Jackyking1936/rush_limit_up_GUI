@@ -142,6 +142,8 @@ class RepeatTimer(Timer):
 class Communicate(QObject):
     # 定義一個帶參數的信號
     print_log_signal = Signal(str)
+    add_new_sub_signal = Signal(str, str, float, float, float)
+    update_table_row_signal = Signal(str, float, float, float)
 
 class MainApp(QWidget):
     def __init__(self):
@@ -158,10 +160,11 @@ class MainApp(QWidget):
         # 製作上下排列layout上為庫存表，下為log資訊
         layout = QVBoxLayout()
         # 庫存表表頭
-        self.table_header = ['股票名稱', '股票代號', '成交', '買進', '賣出', '漲幅(%)', '委託數量', '成交數量']
+        self.table_header = ['股票名稱', '股票代號', '上市櫃', '成交', '買進', '賣出', '漲幅(%)', '委託數量', '成交數量']
         
         self.tablewidget = QTableWidget(0, len(self.table_header))
         self.tablewidget.setHorizontalHeaderLabels([f'{item}' for item in self.table_header])
+        self.tablewidget.setEditTriggers(QTableWidget.NoEditTriggers)
 
         # 整個設定區layout
         layout_condition = QGridLayout()
@@ -247,6 +250,8 @@ class MainApp(QWidget):
         # communicator init and slot function connect
         self.communicator = Communicate()
         self.communicator.print_log_signal.connect(self.print_log)
+        self.communicator.add_new_sub_signal.connect(self.add_new_subscribed)
+        self.communicator.update_table_row_signal.connect(self.update_table_row)
 
         # 各參數初始化
         self.timer = None
@@ -254,26 +259,128 @@ class MainApp(QWidget):
         self.snapshot_freq = int(self.lineEdit_freq.text())
         self.trade_budget = float(self.lineEdit_trade_budget.text())
 
-        open_time = datetime.today().replace(day=25, hour=9, minute=0, second=0, microsecond=0)
+        open_time = datetime.today().replace(hour=9, minute=0, second=0, microsecond=0)
         self.open_unix = int(datetime.timestamp(open_time)*1000000)
         self.last_close_dict = {}
-        self.subscribed_list = []
+        self.subscribed_ids = {}
 
         self.epsilon = 0.0000001
         self.row_idx_map = {}
         self.col_idx_map = dict(zip(self.table_header, range(len(self.table_header))))
     
+    def update_table_row(self, symbol, price, bid, ask):
+        self.tablewidget.item(self.row_idx_map[symbol], self.col_idx_map['成交']).setText(str(round(price+self.epsilon, 2)))
+        if bid>0:
+            self.tablewidget.item(self.row_idx_map[symbol], self.col_idx_map['買進']).setText(str(round(bid+self.epsilon, 2)))
+        else:
+            self.tablewidget.item(self.row_idx_map[symbol], self.col_idx_map['買進']).setText('市價')
+
+        if ask:
+            self.tablewidget.item(self.row_idx_map[symbol], self.col_idx_map['賣出']).setText(str(round(ask+self.epsilon, 2)))
+        else:
+            self.tablewidget.item(self.row_idx_map[symbol], self.col_idx_map['賣出']).setText('-')
+
+        up_range = (price-self.last_close_dict[symbol])/self.last_close_dict[symbol]*100
+        self.tablewidget.item(self.row_idx_map[symbol], self.col_idx_map['漲幅(%)']).setText(str(round(up_range+self.epsilon, 2))+'%')
+
+    # ['股票名稱', '股票代號', '上市櫃', '成交', '買進', '賣出', '漲幅(%)', '委託數量', '成交數量']
+    def add_new_subscribed(self, symbol, tse_otc, price, bid, ask):
+        ticker_res = self.reststock.intraday.ticker(symbol=symbol)
+        print(ticker_res['name'])
+        row = self.tablewidget.rowCount()
+        self.tablewidget.insertRow(row)
+        self.row_idx_map[symbol] = row
+        
+        for j in range(len(self.table_header)):
+            if self.table_header[j] == '股票名稱':
+                item = QTableWidgetItem(ticker_res['name'])
+                self.tablewidget.setItem(row, j, item)
+            elif self.table_header[j] == '股票代號':
+                item = QTableWidgetItem(ticker_res['symbol'])
+                self.tablewidget.setItem(row, j, item)
+            elif self.table_header[j] == '上市櫃':
+                item = QTableWidgetItem(tse_otc)
+                self.tablewidget.setItem(row, j, item)
+            elif self.table_header[j] == '成交':
+                item = QTableWidgetItem(str(round(price+self.epsilon, 2)))
+                self.tablewidget.setItem(row, j, item)
+            elif self.table_header[j] == '買進':
+                if bid > 0:
+                    item = QTableWidgetItem(str(round(bid+self.epsilon, 2)))
+                    self.tablewidget.setItem(row, j, item)
+                else:
+                    item = QTableWidgetItem('市價')
+                    self.tablewidget.setItem(row, j, item)
+            elif self.table_header[j] == '賣出':
+                if ask:
+                    item = QTableWidgetItem(str(round(ask+self.epsilon, 2)))
+                    self.tablewidget.setItem(row, j, item)
+                else:
+                    item = QTableWidgetItem('-')
+                    self.tablewidget.setItem(row, j, item)
+            elif self.table_header[j] == '漲幅(%)':
+                self.last_close_dict[symbol] = ticker_res['previousClose']
+                up_range = (price-ticker_res['previousClose'])/ticker_res['previousClose']*100
+                item = QTableWidgetItem(str(round(up_range+self.epsilon, 2))+'%')
+                self.tablewidget.setItem(row, j, item)
+            elif self.table_header[j] == '委託數量':
+                item = QTableWidgetItem('0')
+                self.tablewidget.setItem(row, j, item)
+            elif self.table_header[j] == '成交數量':
+                item = QTableWidgetItem('0')
+                self.tablewidget.setItem(row, j, item)
+
     def handle_message(self, message):
         msg = json.loads(message)
         event = msg["event"]
         data = msg["data"]
         print(event, data)
 
+         # subscribed事件處理
+        if event == "subscribed":
+            if type(data) == list:
+                for subscribed_item in data:
+                    id = subscribed_item["id"]
+                    symbol = subscribed_item["symbol"]
+                    self.communicator.print_log_signal.emit('訂閱成功...'+symbol)
+                    self.subscribed_ids[symbol] = id
+            else:
+                id = data["id"]
+                symbol = data["symbol"]
+                self.communicator.print_log_signal.emit('訂閱成功'+symbol)
+                self.subscribed_ids[symbol] = id
+        
+        elif event == "unsubscribed":
+            for key, value in self.subscribed_ids.items():
+                if value == data["id"]:
+                    print(value)
+                    remove_key = key
+            self.subscribed_ids.pop(remove_key)
+            self.communicator.print_log_signal.emit(remove_key+"...成功移除訂閱")
+
+        elif event == "snapshot":
+            if 'ask' in data:
+                self.communicator.add_new_sub_signal.emit(data['symbol'], data['market'], data['price'], data['bid'], data['ask'])
+            else:
+                self.communicator.add_new_sub_signal.emit(data['symbol'], data['market'], data['price'], data['bid'], None)
+        elif event == "data":
+            if 'ask' in data:
+                self.communicator.update_table_row_signal.emit(data['symbol'], data['price'], data['bid'], data['ask'])
+            else:
+                self.communicator.update_table_row_signal.emit(data['symbol'], data['price'], data['bid'], None)
+            
+            if 'isLimitUpAsk' in data:
+                if data['isLimitUpAsk']:
+                    self.communicator.print_log_signal.emit('送出市價單...'+data['symbol'])
+
     def handle_connect(self):
         self.communicator.print_log_signal.emit('market data connected')
     
     def handle_disconnect(self, code, message):
-        self.communicator.print_log_signal.emit(f'market data disconnect: {code}, {message}')
+        if not code and not message:
+            self.communicator.print_log_signal.emit(f'WebSocket已停止')
+        else:
+            self.communicator.print_log_signal.emit(f'market data disconnect: {code}, {message}')
     
     def handle_error(self, error):
         self.communicator.print_log_signal.emit(f'market data error: {error}')
@@ -288,12 +395,11 @@ class MainApp(QWidget):
         all_movers_df = pd.concat([TSE_movers_df, OTC_movers_df])
         all_movers_df = all_movers_df[all_movers_df['lastUpdated']>self.open_unix]
         
-        all_movers_df['last_close'] = all_movers_df['closePrice']-all_movers_df['change']
-
-        self.last_close_dict.update(dict(zip(all_movers_df['symbol'], all_movers_df['last_close'])))
+        # all_movers_df['last_close'] = all_movers_df['closePrice']-all_movers_df['change']
+        # self.last_close_dict.update(dict(zip(all_movers_df['symbol'], all_movers_df['last_close'])))
 
         new_subscribe = list(all_movers_df['symbol'])
-        new_subscribe = list(set(new_subscribe).difference(set(self.subscribed_list)))
+        new_subscribe = list(set(new_subscribe).difference(set(self.subscribed_ids.keys())))
         self.communicator.print_log_signal.emit("NEW UP SYMBOL: "+str(new_subscribe))
 
         if new_subscribe:
@@ -301,8 +407,6 @@ class MainApp(QWidget):
                 'channel': 'trades',
                 'symbols': new_subscribe
             })
-        
-            self.subscribed_list.extend(new_subscribe)
 
     def on_button_start_clicked(self):
 
@@ -348,6 +452,13 @@ class MainApp(QWidget):
         self.wsstock.on('error', self.handle_error)
         self.wsstock.connect()
 
+        if self.subscribed_ids:
+            self.wsstock.subscribe({
+                'channel': 'trades',
+                'symbols': list(self.subscribed_ids.keys())
+            })
+
+        self.snapshot_n_subscribe()
         self.timer = RepeatTimer(self.snapshot_freq, self.snapshot_n_subscribe)
         self.timer.start()
 
