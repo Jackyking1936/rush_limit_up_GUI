@@ -376,7 +376,7 @@ class MainApp(QWidget):
     def add_new_subscribed(self, symbol, tse_otc, price, bid, ask, is_limit_up):
         ticker_res = self.reststock.intraday.ticker(symbol=symbol)
         # self.print_log(ticker_res['name'])
-        self.last_close_dict[symbol] = ticker_res['previousClose']
+        self.last_close_dict[symbol] = ticker_res['referencePrice']
 
         row = self.tablewidget.rowCount()
         self.tablewidget.insertRow(row)
@@ -415,7 +415,7 @@ class MainApp(QWidget):
                     self.tablewidget.setItem(row, j, item)
             elif self.table_header[j] == '漲幅(%)':
                 if price:
-                    up_range = (price-ticker_res['previousClose'])/ticker_res['previousClose']*100
+                    up_range = (price-ticker_res['referencePrice'])/ticker_res['referencePrice']*100
                     item = QTableWidgetItem(str(round(up_range+self.epsilon, 2))+'%')
                 else:
                     item = QTableWidgetItem('-')
