@@ -10,7 +10,7 @@ from fubon_neo.constant import TimeInForce, OrderType, PriceType, MarketType, BS
 
 from PySide6.QtWidgets import QApplication, QWidget, QPushButton, QLabel, QLineEdit, QGridLayout, QVBoxLayout, QMessageBox, QTableWidget, QTableWidgetItem, QPlainTextEdit, QFileDialog, QSizePolicy
 from PySide6.QtGui import QTextCursor, QIcon, QColor
-from PySide6.QtCore import Qt, Signal, QObject, QMutex
+from PySide6.QtCore import Qt, Signal, QObject
 from threading import Timer
 
 class LoginForm(QWidget):
@@ -283,14 +283,13 @@ class MainApp(QWidget):
         self.snapshot_freq = int(self.lineEdit_freq.text())
         self.trade_budget = float(self.lineEdit_trade_budget.text())
 
-        open_time = datetime.today().replace(day=26, hour=9, minute=0, second=0, microsecond=0)
+        open_time = datetime.today().replace(hour=9, minute=0, second=0, microsecond=0)
         self.open_unix = int(datetime.timestamp(open_time)*1000000)
         self.last_close_dict = {}
         self.subscribed_ids = {}
         self.is_ordered = {}
         self.order_tag = 'rlu'
         self.fake_price_cnt=0
-        # self.mutex = QMutex()
 
         self.epsilon = 0.0000001
         self.row_idx_map = {}
@@ -510,7 +509,11 @@ class MainApp(QWidget):
             if ('isLimitUpAsk' in data) and (data['symbol'] not in self.is_ordered):
                 if data['isLimitUpAsk']:
                     self.communicator.print_log_signal.emit(data['symbol']+'...送出市價單')
-                    buy_qty = self.trade_budget//(data['ask']*1000)*1000
+                    if 'ask' in data:
+                        buy_qty = self.trade_budget//(data['ask']*1000)*1000
+                    elif 'price' in data:
+                        buy_qty = self.trade_budget//(data['price']*1000)*1000
+                        
                     if buy_qty <= 0:
                         self.communicator.print_log_signal.emit(data['symbol']+'...額度不足購買1張')
                     else:
@@ -535,7 +538,6 @@ class MainApp(QWidget):
     
     def handle_error(self, error):
         self.communicator.print_log_signal.emit(f'market data error: {error}')
-        self.mutex.unlock()
 
     def snapshot_n_subscribe(self):
         self.communicator.print_log_signal.emit("snapshoting...")

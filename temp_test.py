@@ -13,7 +13,7 @@ reststock.intraday.tickers(type='EQUITY', exchange="TPEx", isDisposition=True)
 import requests as req
 import pandas as pd
 
-bus_table = pd.read_html(r"https://goodinfo.tw/tw2/StockList.asp?MARKET_CAT=%E6%99%BA%E6%85%A7%E9%81%B8%E8%82%A1&INDUSTRY_CAT=%E5%85%A8%E9%A1%8D%E4%BA%A4%E5%89%B2%E8%82%A1")# %%
+# bus_table = pd.read_html(r"https://goodinfo.tw/tw2/StockList.asp?MARKET_CAT=%E6%99%BA%E6%85%A7%E9%81%B8%E8%82%A1&INDUSTRY_CAT=%E5%85%A8%E9%A1%8D%E4%BA%A4%E5%89%B2%E8%82%A1")# %%
 #%%
 
 reststock.intraday.tickers(type='WARRANT', exchange="TWSE")
