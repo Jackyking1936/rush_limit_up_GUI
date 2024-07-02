@@ -482,29 +482,29 @@ class MainApp(QWidget):
             is_limit_up = False
             if 'isLimitUpPrice' in data:
                 is_limit_up = True
-            
-            if 'ask' not in data:
-                data['ask'] = None
-            if 'bid' not in data:
-                data['bid'] = None
-            if 'price' not in data:
-                data['price'] = None
 
-            self.communicator.add_new_sub_signal.emit(data['symbol'], data['market'], data['price'], data['bid'], data['ask'], is_limit_up)
+            if 'ask' in data:
+                self.communicator.add_new_sub_signal.emit(data['symbol'], data['market'], data['price'], data['bid'], data['ask'], is_limit_up)
+            elif 'bid' in data:
+                self.communicator.add_new_sub_signal.emit(data['symbol'], data['market'], data['price'], data['bid'], None, is_limit_up)
+            elif 'price' in data:
+                self.communicator.add_new_sub_signal.emit(data['symbol'], data['market'], data['price'], None, None, is_limit_up)
+            else:
+                self.communicator.add_new_sub_signal.emit(data['symbol'], data['market'], None, None, None, is_limit_up)
 
         elif event == "data":
             is_limit_up = False
             if 'isLimitUpPrice' in data:
                 is_limit_up = True
 
-            if 'ask' not in data:
-                data['ask'] = None
-            if 'bid' not in data:
-                data['bid'] = None
-            if 'price' not in data:
-                data['price'] = None
-
-            self.communicator.add_new_sub_signal.emit(data['symbol'], data['market'], data['price'], data['bid'], data['ask'], is_limit_up)
+            if 'ask' in data:
+                self.communicator.update_table_row_signal.emit(data['symbol'], data['price'], data['bid'], data['ask'], is_limit_up)
+            elif 'bid' in data:
+                self.communicator.update_table_row_signal.emit(data['symbol'], data['price'], data['bid'], None, is_limit_up)
+            elif 'price' in data:
+                self.communicator.update_table_row_signal.emit(data['symbol'], data['price'], None, None, is_limit_up)
+            else:
+                self.communicator.update_table_row_signal.emit(data['symbol'], None, None, None, is_limit_up)
             
             if (('isLimitUpAsk' in data) or ('isLimitUpPrice' in data)) and (data['symbol'] not in self.is_ordered):
                 if data['isLimitUpAsk']:
