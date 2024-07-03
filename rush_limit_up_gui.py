@@ -211,7 +211,7 @@ class MainApp(QWidget):
         label_trade_budget = QLabel('每檔額度')
         layout_condition.addWidget(label_trade_budget, 1, 3)
         self.lineEdit_trade_budget = QLineEdit()
-        self.lineEdit_trade_budget.setText('10')
+        self.lineEdit_trade_budget.setText('0.1')
         layout_condition.addWidget(self.lineEdit_trade_budget, 1, 4)
         label_trade_budget_post = QLabel('萬元')
         layout_condition.addWidget(label_trade_budget_post, 1, 5)
@@ -454,7 +454,7 @@ class MainApp(QWidget):
         msg = json.loads(message)
         event = msg["event"]
         data = msg["data"]
-        print(event, data)
+        # print(event, data)
 
          # subscribed事件處理
         if event == "subscribed":
@@ -483,35 +483,38 @@ class MainApp(QWidget):
             if 'isLimitUpPrice' in data:
                 is_limit_up = True
 
-            if 'ask' in data:
-                self.communicator.add_new_sub_signal.emit(data['symbol'], data['market'], data['price'], data['bid'], data['ask'], is_limit_up)
-            elif 'bid' in data:
-                self.communicator.add_new_sub_signal.emit(data['symbol'], data['market'], data['price'], data['bid'], None, is_limit_up)
-            elif 'price' in data:
-                self.communicator.add_new_sub_signal.emit(data['symbol'], data['market'], data['price'], None, None, is_limit_up)
-            else:
-                self.communicator.add_new_sub_signal.emit(data['symbol'], data['market'], None, None, None, is_limit_up)
+            if 'ask' not in data:
+                data['ask'] = None
+            if 'bid' not in data:
+                data['bid'] = None
+            if 'price' not in data:
+                data['price'] = None
+
+            self.communicator.add_new_sub_signal.emit(data['symbol'], data['market'], data['price'], data['bid'], data['ask'], is_limit_up)
 
         elif event == "data":
+            if 'isTrail' in data:
+                if data['isTrail']:
+                    return
+                
             is_limit_up = False
             if 'isLimitUpPrice' in data:
                 is_limit_up = True
 
-            if 'ask' in data:
-                self.communicator.update_table_row_signal.emit(data['symbol'], data['price'], data['bid'], data['ask'], is_limit_up)
-            elif 'bid' in data:
-                self.communicator.update_table_row_signal.emit(data['symbol'], data['price'], data['bid'], None, is_limit_up)
-            elif 'price' in data:
-                self.communicator.update_table_row_signal.emit(data['symbol'], data['price'], None, None, is_limit_up)
-            else:
-                self.communicator.update_table_row_signal.emit(data['symbol'], None, None, None, is_limit_up)
+            if 'ask' not in data:
+                data['ask'] = None
+            if 'bid' not in data:
+                data['bid'] = None
+            if 'price' not in data:
+                data['price'] = None
             
-            if (('isLimitUpAsk' in data) or ('isLimitUpPrice' in data)) and (data['symbol'] not in self.is_ordered):
-                if data['isLimitUpAsk']:
+            print(event, data)
+            self.communicator.update_table_row_signal.emit(data['symbol'], data['price'], data['bid'], data['ask'], is_limit_up)
+            
+            if ('isLimitUpPrice' in data) and (data['symbol'] not in self.is_ordered):
+                if data['isLimitUpPrice']:
                     self.communicator.print_log_signal.emit(data['symbol']+'...送出市價單')
-                    if 'ask' in data:
-                        buy_qty = self.trade_budget//(data['ask']*1000)*1000
-                    elif 'price' in data:
+                    if 'price' in data:
                         buy_qty = self.trade_budget//(data['price']*1000)*1000
                         
                     if buy_qty <= 0:
