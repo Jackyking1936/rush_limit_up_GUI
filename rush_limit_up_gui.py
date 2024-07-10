@@ -638,6 +638,7 @@ class MainApp(QWidget):
         self.lineEdit_up_range.setReadOnly(True)
         self.lineEdit_freq.setReadOnly(True)
         self.lineEdit_trade_budget.setReadOnly(True)
+        self.lineEdit_total_budget.setReadOnly(True)
         self.button_start.setVisible(False)
         self.button_stop.setVisible(True)
         self.tablewidget.clearContents()
@@ -666,6 +667,7 @@ class MainApp(QWidget):
         self.lineEdit_up_range.setReadOnly(False)
         self.lineEdit_freq.setReadOnly(False)
         self.lineEdit_trade_budget.setReadOnly(False)
+        self.lineEdit_total_budget.setReadOnly(False)
         self.button_stop.setVisible(False)
         self.button_start.setVisible(True)
 
