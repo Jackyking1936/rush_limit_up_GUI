@@ -298,6 +298,7 @@ class MainApp(QWidget):
         self.last_close_dict = {}
         self.subscribed_ids = {}
         self.is_ordered = {}
+        self.is_filled = {}
         self.order_tag = 'rlu'
         self.fake_price_cnt=0
 
@@ -514,6 +515,10 @@ class MainApp(QWidget):
                 data['price'] = -1
 
             self.communicator.add_new_sub_signal.emit(data['symbol'], data['market'], data['price'], data['bid'], data['ask'], is_limit_up)
+            if data['symbol'] in self.is_ordered:
+                self.communicator.order_qty_update.emit(data['symbol'], self.is_ordered[data['symbol']])
+            if data['symbol'] in self.is_filled:
+                self.communicator.filled_qty_update.emit(data['symbol'], self.is_filled[data['symbol']])
 
         elif event == "data":
             if 'isTrial' in data:
@@ -693,7 +698,12 @@ class MainApp(QWidget):
         
         if content.account == active_account.account:
             if content.user_def == self.order_tag:
-                self.communicator.filled_qty_update.emit(content.stock_no, content.filled_qty)
+                if content.stock_no in self.is_filled:
+                    self.is_filled[content.stock_no] += content.filled_qty
+                else:
+                    self.is_filled[content.stock_no] = content.filled_qty
+
+                self.communicator.filled_qty_update.emit(content.stock_no, self.is_filled[content.stock_no])
                 self.communicator.print_log_signal.emit(content.stock_no+'...成功成交'+str(content.filled_qty)+'股, '+'成交價:'+str(content.filled_price))
 
     # 更新最新log到QPlainTextEdit的slot function
