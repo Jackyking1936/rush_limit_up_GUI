@@ -215,6 +215,14 @@ class MainApp(QWidget):
         layout_condition.addWidget(self.lineEdit_trade_budget, 1, 4)
         label_trade_budget_post = QLabel('萬元')
         layout_condition.addWidget(label_trade_budget_post, 1, 5)
+        label_total_budget = QLabel('總額度')
+        layout_condition.addWidget(label_total_budget, 2, 3)
+        self.lineEdit_total_budget = QLineEdit()
+        self.lineEdit_total_budget.setText('0.1')
+        layout_condition.addWidget(self.lineEdit_total_budget, 2, 4)
+        label_total_budget_post = QLabel('萬元')
+        layout_condition.addWidget(label_total_budget_post, 2, 5)
+
 
         # 啟動按鈕
         self.button_start = QPushButton('開始洗價')
@@ -282,6 +290,8 @@ class MainApp(QWidget):
         self.watch_percent = float(self.lineEdit_up_range.text())
         self.snapshot_freq = int(self.lineEdit_freq.text())
         self.trade_budget = float(self.lineEdit_trade_budget.text())
+        self.total_budget = float(self.lineEdit_total_budget.text())
+        self.used_budget = 0
 
         open_time = datetime.today().replace(hour=9, minute=0, second=0, microsecond=0)
         self.open_unix = int(datetime.timestamp(open_time)*1000000)
@@ -525,23 +535,27 @@ class MainApp(QWidget):
             self.communicator.update_table_row_signal.emit(data['symbol'], data['price'], data['bid'], data['ask'], is_limit_up)
             
             if ('isLimitUpPrice' in data) and (data['symbol'] not in self.is_ordered):
-                if data['isLimitUpPrice']:
-                    self.communicator.print_log_signal.emit(data['symbol']+'...送出市價單')
-                    if 'price' in data:
-                        buy_qty = self.trade_budget//(data['price']*1000)*1000
-                        
-                    if buy_qty <= 0:
-                        self.communicator.print_log_signal.emit(data['symbol']+'...額度不足購買1張')
-                    else:
-                        self.communicator.print_log_signal.emit(data['symbol']+'...委託'+str(buy_qty)+'股')
-                        order_res = self.buy_market_order(data['symbol'], buy_qty, self.order_tag)
-                        if order_res.is_success:
-                            self.communicator.print_log_signal.emit(data['symbol']+"...市價單發送成功，單號: "+order_res.data.order_no)
-                            self.is_ordered[data['symbol']] = buy_qty
-                            self.communicator.order_qty_update.emit(data['symbol'], buy_qty)
+                if (self.trade_budget <= (self.total_budget-self.used_budget)):
+                    if data['isLimitUpPrice']:
+                        self.communicator.print_log_signal.emit(data['symbol']+'...送出市價單')
+                        if 'price' in data:
+                            buy_qty = self.trade_budget//(data['price']*1000)*1000
+                            
+                        if buy_qty <= 0:
+                            self.communicator.print_log_signal.emit(data['symbol']+'...額度不足購買1張')
                         else:
-                            self.communicator.print_log_signal.emit(data['symbol']+"...市價單發送失敗...")
-                            self.communicator.print_log_signal.emit(order_res.message)
+                            self.communicator.print_log_signal.emit(data['symbol']+'...委託'+str(buy_qty)+'股')
+                            order_res = self.buy_market_order(data['symbol'], buy_qty, self.order_tag)
+                            if order_res.is_success:
+                                self.communicator.print_log_signal.emit(data['symbol']+"...市價單發送成功，單號: "+order_res.data.order_no)
+                                self.is_ordered[data['symbol']] = buy_qty
+                                self.used_budget+=buy_qty*data['price']
+                                self.communicator.order_qty_update.emit(data['symbol'], buy_qty)
+                            else:
+                                self.communicator.print_log_signal.emit(data['symbol']+"...市價單發送失敗...")
+                                self.communicator.print_log_signal.emit(order_res.message)
+                else:
+                    self.communicator.print_log_signal.emit("總額度超限", "已使用額度/總額度:", self.used_budget, '/', self.total_budget)
 
     def handle_connect(self):
         self.communicator.print_log_signal.emit('market data connected')
@@ -607,6 +621,17 @@ class MainApp(QWidget):
                 self.trade_budget = self.trade_budget*10000
         except Exception as e:
             self.print_log("請輸入正確的每檔買入額度(萬元), "+str(e))
+            return
+
+        try:
+            self.total_budget = float(self.lineEdit_total_budget.text())
+            if self.total_budget<0:
+                self.print_log("請輸入正確的總額度(萬元), 必須大於0")
+                return
+            else:
+                self.total_budget = self.total_budget*10000
+        except Exception as e:
+            self.print_log("請輸入正確的總額度(萬元), "+str(e))
             return
         
         self.print_log("開始執行監控")
