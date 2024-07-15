@@ -359,7 +359,6 @@ class MainApp(QWidget):
         self.tablewidget.item(self.row_idx_map[symbol], self.col_idx_map['委託數量']).setText(str(order_qty))
 
     def update_table_row(self, symbol, price, bid, ask, is_limit_up):
-        self.tablewidget.item(self.row_idx_map[symbol], self.col_idx_map['成交']).setText(str(round(price+self.epsilon, 2)))
         if bid > 0:
             self.tablewidget.item(self.row_idx_map[symbol], self.col_idx_map['買進']).setText(str(round(bid+self.epsilon, 2)))
         elif bid == 0:
@@ -374,13 +373,12 @@ class MainApp(QWidget):
         elif ask == -1:
             self.tablewidget.item(self.row_idx_map[symbol], self.col_idx_map['賣出']).setText('-')
         
-        
-
-        if price:
+        if price>0:
+            self.tablewidget.item(self.row_idx_map[symbol], self.col_idx_map['成交']).setText(str(round(price+self.epsilon, 2)))
             up_range = (price-self.last_close_dict[symbol])/self.last_close_dict[symbol]*100
             self.tablewidget.item(self.row_idx_map[symbol], self.col_idx_map['漲幅(%)']).setText(str(round(up_range+self.epsilon, 2))+'%')
         else:
-            self.tablewidget.item(self.row_idx_map[symbol], self.col_idx_map['賣出']).setText('-')
+            self.tablewidget.item(self.row_idx_map[symbol], self.col_idx_map['成交']).setText('-')
         
         if is_limit_up:
             self.tablewidget.item(self.row_idx_map[symbol], self.col_idx_map['漲幅(%)']).setBackground(QColor(Qt.red))
